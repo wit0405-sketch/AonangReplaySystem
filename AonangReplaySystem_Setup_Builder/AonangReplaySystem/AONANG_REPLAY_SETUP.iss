@@ -1,5 +1,5 @@
-# Inno Setup script for AONANG LANDMARK REPLAY SYSTEM
-# Build on Windows with Inno Setup 6 installed.
+; Inno Setup script for AONANG LANDMARK REPLAY SYSTEM
+; Build on Windows with Inno Setup 6 installed.
 #define MyAppName "AONANG LANDMARK REPLAY SYSTEM"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "Aonang Landmark Boxing Stadium"
@@ -25,7 +25,7 @@ UninstallDisplayIcon={app}\AonangReplaySystem.exe
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-; This expects the EXE to be built first using BUILD_EXE.bat.
+; This expects the EXE to be built first using PyInstaller.
 Source: "dist\AonangReplaySystem\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
