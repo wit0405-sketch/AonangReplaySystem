@@ -46,8 +46,13 @@ jobs:
           if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found: $compiler" }
           if (!(Test-Path $script)) { throw "Installer script not found: $script" }
           if (!(Test-Path (Join-Path $project "dist\AonangReplaySystem\AonangReplaySystem.exe"))) { throw "PyInstaller EXE not found in dist folder" }
-          & $compiler "/O$output" $script
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
+          Push-Location $project
+          try {
+            & $compiler "/O$output" $script
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
+          } finally {
+            Pop-Location
+          }
           if (!(Test-Path (Join-Path $output "Setup_AonangReplaySystem.exe"))) { throw "Setup.exe was not created in $output" }
 
       - name: Upload installer artifact
