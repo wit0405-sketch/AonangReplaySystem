@@ -40,25 +40,23 @@ jobs:
         run: |
           $project = Join-Path $env:GITHUB_WORKSPACE "AonangReplaySystem_Setup_Builder\AonangReplaySystem"
           $script = Join-Path $project "AONANG_REPLAY_SETUP.iss"
-          $output = Join-Path $project "installer_output"
           $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-          New-Item -ItemType Directory -Force -Path $output | Out-Null
           if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found: $compiler" }
           if (!(Test-Path $script)) { throw "Installer script not found: $script" }
           if (!(Test-Path (Join-Path $project "dist\AonangReplaySystem\AonangReplaySystem.exe"))) { throw "PyInstaller EXE not found in dist folder" }
           Push-Location $project
           try {
-            & $compiler "/O$output" $script
+            & $compiler $script
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
           } finally {
             Pop-Location
           }
-          if (!(Test-Path (Join-Path $output "Setup_AonangReplaySystem.exe"))) { throw "Setup.exe was not created in $output" }
+          if (!(Test-Path (Join-Path $project "Setup_AonangReplaySystem.exe"))) { throw "Setup.exe was not created in $project" }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: AonangReplaySystem-Setup-Windows
-          path: AonangReplaySystem_Setup_Builder/AonangReplaySystem/installer_output/Setup_AonangReplaySystem.exe
+          path: AonangReplaySystem_Setup_Builder/AonangReplaySystem/Setup_AonangReplaySystem.exe
           if-no-files-found: error
           retention-days: 14
