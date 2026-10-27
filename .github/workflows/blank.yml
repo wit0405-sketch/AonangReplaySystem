@@ -30,7 +30,7 @@ jobs:
 
       - name: Build application EXE
         working-directory: AonangReplaySystem_Setup_Builder/AonangReplaySystem
-        run: python -m PyInstaller --noconfirm --windowed --name AonangReplaySystem --collect-all PySide6 src/main.py
+        run: python -m PyInstaller --noconfirm --clean --windowed --name AonangReplaySystem src/main.py
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
@@ -41,9 +41,10 @@ jobs:
           $project = Join-Path $env:GITHUB_WORKSPACE "AonangReplaySystem_Setup_Builder\AonangReplaySystem"
           $script = Join-Path $project "AONANG_REPLAY_SETUP.iss"
           $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          $appExe = Join-Path $project "dist\AonangReplaySystem\AonangReplaySystem.exe"
           if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found: $compiler" }
           if (!(Test-Path $script)) { throw "Installer script not found: $script" }
-          if (!(Test-Path (Join-Path $project "dist\AonangReplaySystem\AonangReplaySystem.exe"))) { throw "PyInstaller EXE not found in dist folder" }
+          if (!(Test-Path $appExe)) { throw "PyInstaller EXE not found: $appExe" }
           Push-Location $project
           try {
             & $compiler $script
@@ -51,7 +52,9 @@ jobs:
           } finally {
             Pop-Location
           }
-          if (!(Test-Path (Join-Path $project "Setup_AonangReplaySystem.exe"))) { throw "Setup.exe was not created in $project" }
+          $setup = Join-Path $project "Setup_AonangReplaySystem.exe"
+          if (!(Test-Path $setup)) { throw "Setup.exe was not created: $setup" }
+          Get-Item $setup | Select-Object FullName, Length
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
