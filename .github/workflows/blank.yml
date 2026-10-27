@@ -39,11 +39,13 @@ jobs:
 
       - name: Build Setup.exe
         shell: pwsh
-        working-directory: .
         run: |
-          $project = Join-Path $env:GITHUB_WORKSPACE "AonangReplaySystem_Setup_Builder/AonangReplaySystem"
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" (Join-Path $project "AONANG_REPLAY_SETUP.iss")
+          New-Item -ItemType Directory -Force -Path installer_output | Out-Null
+          $compiler = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found at $compiler" }
+          & $compiler "AONANG_REPLAY_SETUP.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
+          if (!(Test-Path "installer_output\Setup_AonangReplaySystem.exe")) { throw "Setup.exe was not created" }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
