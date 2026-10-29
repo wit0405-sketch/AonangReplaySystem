@@ -9,8 +9,9 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QMessageBox,
-    QFileDialog, QSlider, QSpinBox
+    QFileDialog, QSlider, QSpinBox, QInputDialog
 )
+import obsws_python as obsws
 
 APP_NAME = "AONANG LANDMARK REPLAY SYSTEM"
 BUFFER_SECONDS = 30
@@ -33,6 +34,13 @@ class ReplayWindow(QMainWindow):
         self.frame_size = (1280, 720)
         self.last_frame = None
         self.replay_path = None
+        self.obs_client = None
+        self.obs_host = "127.0.0.1"
+        self.obs_port = 4455
+        self.obs_password = ""
+        self.obs_live_scene = "LIVE"
+        self.obs_replay_scene = "REPLAY"
+        self.obs_media_source = "Aonang Replay"
         self.bus = FrameBus()
         self.bus.frame_ready.connect(self.update_preview)
         self._build_ui()
@@ -101,9 +109,31 @@ class ReplayWindow(QMainWindow):
         actions.addWidget(self.live_btn, 0, 3)
         main.addLayout(actions)
 
+        obs_box = QGroupBox("OBS STUDIO CONTROL")
+        obs_layout = QVBoxLayout(obs_box)
+        obs_buttons = QGridLayout()
+        self.obs_connect_btn = QPushButton("Connect OBS")
+        self.obs_connect_btn.clicked.connect(self.connect_obs)
+        self.obs_play_btn = QPushButton("PLAY REPLAY")
+        self.obs_play_btn.clicked.connect(self.play_replay_obs)
+        self.obs_stop_btn = QPushButton("STOP REPLAY")
+        self.obs_stop_btn.clicked.connect(self.stop_replay_obs)
+        self.obs_live_btn = QPushButton("BACK TO LIVE")
+        self.obs_live_btn.clicked.connect(self.back_to_live_obs)
+        obs_buttons.addWidget(self.obs_connect_btn, 0, 0)
+        obs_buttons.addWidget(self.obs_play_btn, 0, 1)
+        obs_buttons.addWidget(self.obs_stop_btn, 0, 2)
+        obs_buttons.addWidget(self.obs_live_btn, 0, 3)
+        obs_layout.addLayout(obs_buttons)
+        self.obs_status = QLabel("Connection Status: DISCONNECTED")
+        self.obs_status.setObjectName("obsStatus")
+        obs_layout.addWidget(self.obs_status)
+        main.addWidget(obs_box)
+
         info = QLabel(
-            "OBS workflow: Save Replay → OBS Sources (+) → Media Source → select the saved MP4. "
-            "Use OBS scene transitions to switch between LIVE and REPLAY."
+            "OBS setup: In OBS Studio (28+), enable Tools → WebSocket Server Settings "
+            "and use port 4455. Create scenes named LIVE and REPLAY. The app creates/updates "
+            "a Media Source named 'Aonang Replay' in REPLAY when you play a clip."
         )
         info.setWordWrap(True)
         info.setObjectName("info")
@@ -132,6 +162,7 @@ class ReplayWindow(QMainWindow):
             QPushButton#save:hover { background: #c23838; }
             QComboBox, QSpinBox { background: #182635; padding: 8px; border: 1px solid #42627f; }
             QLabel#info { background: #182635; padding: 10px; color: #b9d7f0; }
+            QLabel#obsStatus { background: #182635; padding: 8px; color: #ffcc66; font-weight: bold; }
         """)
 
     def toggle_camera(self):
@@ -267,6 +298,96 @@ class ReplayWindow(QMainWindow):
         if self.last_frame is not None:
             self.update_preview(self.last_frame)
         self.log.setText("Live preview selected. In OBS, switch back to your LIVE scene/source.")
+
+    def connect_obs(self):
+        host, ok = QInputDialog.getText(self, "Connect OBS", "OBS WebSocket host:", text=self.obs_host)
+        if not ok:
+            return
+        port, ok = QInputDialog.getInt(self, "Connect OBS", "WebSocket port:", self.obs_port, 1, 65535)
+        if not ok:
+            return
+        password, ok = QInputDialog.getText(self, "Connect OBS", "WebSocket password (leave blank if none):",
+                                            text=self.obs_password)
+        if not ok:
+            return
+        try:
+            client = obsws.ReqClient(host=host.strip(), port=port, password=password, timeout=3)
+            client.get_version()  # verify the WebSocket connection and authentication
+            scenes_response = client.get_scene_list()
+            scene_names = [s.get("sceneName") for s in getattr(scenes_response, "scenes", [])]
+            missing = [name for name in (self.obs_live_scene, self.obs_replay_scene) if name not in scene_names]
+            if missing:
+                raise RuntimeError("ไม่พบฉาก OBS: " + ", ".join(missing) + " — กรุณาสร้างฉาก LIVE และ REPLAY ใน OBS ก่อน")
+            self.obs_client = client
+            self.obs_host, self.obs_port, self.obs_password = host.strip(), port, password
+            self.obs_status.setText(f"Connection Status: CONNECTED ({self.obs_host}:{self.obs_port})")
+            self.obs_connect_btn.setText("Reconnect OBS")
+            self.log.setText("เชื่อมต่อ OBS สำเร็จ พร้อมควบคุมฉาก LIVE/REPLAY")
+        except Exception as exc:
+            self.obs_client = None
+            self.obs_status.setText("Connection Status: DISCONNECTED")
+            QMessageBox.warning(self, "OBS connection failed",
+                                "เชื่อมต่อ OBS ไม่สำเร็จ\nตรวจสอบว่า OBS เปิดอยู่และเปิด WebSocket Server แล้ว\n\n" + str(exc))
+
+    def _require_obs(self):
+        if self.obs_client is None:
+            QMessageBox.information(self, "OBS not connected", "กด Connect OBS และเชื่อมต่อให้สำเร็จก่อน")
+            return False
+        return True
+
+    def _ensure_replay_media_source(self):
+        response = self.obs_client.get_input_list()
+        names = [item.get("inputName") for item in getattr(response, "inputs", [])]
+        if self.obs_media_source not in names:
+            self.obs_client.create_input(
+                self.obs_replay_scene, self.obs_media_source, "ffmpeg_source",
+                {"local_file": self.replay_path, "is_local_file": True, "looping": False}, True
+            )
+        else:
+            self.obs_client.set_input_settings(
+                self.obs_media_source,
+                {"local_file": self.replay_path, "is_local_file": True, "looping": False},
+                overlay=True
+            )
+
+    def play_replay_obs(self):
+        if not self._require_obs():
+            return
+        if not self.replay_path or not os.path.isfile(self.replay_path):
+            QMessageBox.information(self, "No replay selected", "กรุณากด SAVE REPLAY หรือ OPEN REPLAY FILE ก่อน")
+            return
+        try:
+            self._ensure_replay_media_source()
+            self.obs_client.set_current_program_scene(self.obs_replay_scene)
+            self.obs_client.trigger_media_input_action(
+                self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
+            )
+            self.obs_status.setText("Connection Status: CONNECTED | REPLAY PLAYING")
+            self.log.setText(f"กำลังเล่นรีเพลย์บน OBS: {self.replay_path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "OBS replay failed", str(exc))
+
+    def stop_replay_obs(self):
+        if not self._require_obs():
+            return
+        try:
+            self.obs_client.trigger_media_input_action(
+                self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"
+            )
+            self.obs_status.setText("Connection Status: CONNECTED | REPLAY STOPPED")
+            self.log.setText("หยุดเล่นรีเพลย์ใน OBS แล้ว")
+        except Exception as exc:
+            QMessageBox.warning(self, "OBS stop failed", str(exc))
+
+    def back_to_live_obs(self):
+        if not self._require_obs():
+            return
+        try:
+            self.obs_client.set_current_program_scene(self.obs_live_scene)
+            self.obs_status.setText("Connection Status: CONNECTED | LIVE")
+            self.log.setText("เปลี่ยนกลับไปฉาก LIVE ใน OBS แล้ว")
+        except Exception as exc:
+            QMessageBox.warning(self, "OBS scene switch failed", str(exc))
 
     def refresh_status(self):
         if self.running:
