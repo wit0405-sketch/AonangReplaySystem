@@ -106,8 +106,7 @@ jobs:
           } else {
             $version = $env:RELEASE_VERSION_INPUT.Trim()
           }
-          if ($version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?
-) {
+          if ($version -notmatch "^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$") {
             throw "Invalid release version '$version'. Use a version like v0.2.0."
           }
           gh release create "$version" $setup $hashFile --title "Aonang Replay System $version" --generate-notes
