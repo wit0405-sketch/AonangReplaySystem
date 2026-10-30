@@ -46,7 +46,9 @@ jobs:
           if (!(Test-Path $appExe)) { throw "PyInstaller EXE not found: $appExe" }
           $distDir = Join-Path $project "dist\AonangReplaySystem"
           if (!(Test-Path $distDir)) { throw "PyInstaller output folder not found: $distDir" }
-          $outputDir = Join-Path $project "installer_output"
+          # Remove Qt/PySide6 build-time artifacts that are not needed at runtime.
+          Get-ChildItem $distDir -Recurse -File -Include *.obj,*.cpp -ErrorAction SilentlyContinue | Remove-Item -Force
+          $outputDir = Join-Path $env:RUNNER_TEMP "AonangReplayInstaller"
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
           Write-Host "Project: $project"
           Write-Host "Installer script: $script"
@@ -58,12 +60,12 @@ jobs:
           Get-ChildItem $distDir | Select-Object -First 10 Name
           Push-Location $project
           try {
-            & $compiler $script
+            & $compiler "/O$outputDir" $script
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
           } finally {
             Pop-Location
           }
-          $setup = Join-Path $project "installer_output\Setup_AonangReplaySystem.exe"
+          $setup = Join-Path $outputDir "Setup_AonangReplaySystem.exe"
           if (!(Test-Path $setup)) { throw "Setup.exe was not created: $setup" }
           Get-Item $setup | Select-Object FullName, Length
 
@@ -71,6 +73,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AonangReplaySystem-Setup-Windows
-          path: AonangReplaySystem_Setup_Builder/AonangReplaySystem/installer_output/Setup_AonangReplaySystem.exe
+          path: ${{ runner.temp }}/AonangReplayInstaller/Setup_AonangReplaySystem.exe
           if-no-files-found: error
           retention-days: 14
