@@ -1,6 +1,6 @@
 ; Inno Setup script for AONANG LANDMARK REPLAY SYSTEM
 #define MyAppName "AONANG LANDMARK REPLAY SYSTEM"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Aonang Landmark Boxing Stadium"
 #define MyAppExeName "AonangReplaySystem.exe"
 
@@ -11,7 +11,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\AonangReplaySystem
 DefaultGroupName={#MyAppName}
-OutputDir=.
+OutputDir=installer_output
 OutputBaseFilename=Setup_AonangReplaySystem
 Compression=lzma
 SolidCompression=yes
