@@ -44,6 +44,14 @@ jobs:
           if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found: $compiler" }
           if (!(Test-Path $script)) { throw "Installer script not found: $script" }
           if (!(Test-Path $appExe)) { throw "PyInstaller EXE not found: $appExe" }
+          $distDir = Join-Path $project "dist\AonangReplaySystem"
+          if (!(Test-Path $distDir)) { throw "PyInstaller output folder not found: $distDir" }
+          $outputDir = Join-Path $project "installer_output"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          Write-Host "Project: $project"
+          Write-Host "Installer script: $script"
+          Write-Host "PyInstaller output: $distDir"
+          Write-Host "Installer output: $outputDir"
           Push-Location $project
           try {
             & $compiler $script
