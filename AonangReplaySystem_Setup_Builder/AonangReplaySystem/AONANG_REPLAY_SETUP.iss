@@ -11,7 +11,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\AonangReplaySystem
 DefaultGroupName={#MyAppName}
-OutputDir={#SourcePath}\installer_output
+OutputDir={#SourcePath}installer_output
 OutputBaseFilename=Setup_AonangReplaySystem
 Compression=lzma
 SolidCompression=yes
@@ -24,7 +24,7 @@ UninstallDisplayIcon={app}\AonangReplaySystem.exe
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "{#SourcePath}\dist\AonangReplaySystem\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "{#SourcePath}dist\AonangReplaySystem\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
 Name: "{group}\AONANG Replay System"; Filename: "{app}\AonangReplaySystem.exe"
