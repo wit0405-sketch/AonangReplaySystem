@@ -1,20 +1,19 @@
-import sys, os, time, threading, tempfile, subprocess
+import sys, os, time, threading, subprocess, shutil
 from collections import deque
 from pathlib import Path
 
 import cv2
-import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QMessageBox,
-    QFileDialog, QSlider, QSpinBox, QInputDialog
+    QFileDialog, QSpinBox, QInputDialog
 )
 import obsws_python as obsws
 
 APP_NAME = "AONANG LANDMARK REPLAY SYSTEM"
-BUFFER_SECONDS = 30
+APP_VERSION = "0.2.0"
 
 class FrameBus(QObject):
     frame_ready = Signal(object)
@@ -22,7 +21,7 @@ class FrameBus(QObject):
 class ReplayWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(1280, 800)
         self.setMinimumSize(960, 640)
         self.cap = None
@@ -30,8 +29,6 @@ class ReplayWindow(QMainWindow):
         self.capture_thread = None
         self.frames = deque()
         self.lock = threading.Lock()
-        self.fps = 30.0
-        self.frame_size = (1280, 720)
         self.last_frame = None
         self.replay_path = None
         self.obs_client = None
@@ -79,7 +76,6 @@ class ReplayWindow(QMainWindow):
         self.device = QComboBox()
         for i in range(10):
             self.device.addItem(f"Camera device {i}", i)
-        self.device.setCurrentIndex(0)
         self.connect_btn = QPushButton("CONNECT CAMERA")
         self.connect_btn.clicked.connect(self.toggle_camera)
         controls.addWidget(QLabel("Capture device:"))
@@ -94,7 +90,7 @@ class ReplayWindow(QMainWindow):
         main.addLayout(controls)
 
         actions = QGridLayout()
-        self.save_btn = QPushButton("SAVE REPLAY 30s")
+        self.save_btn = QPushButton("SAVE REPLAY")
         self.save_btn.setObjectName("save")
         self.save_btn.clicked.connect(self.save_replay)
         self.open_btn = QPushButton("OPEN REPLAY FILE")
@@ -131,9 +127,9 @@ class ReplayWindow(QMainWindow):
         main.addWidget(obs_box)
 
         info = QLabel(
-            "OBS setup: In OBS Studio (28+), enable Tools → WebSocket Server Settings "
-            "and use port 4455. Create scenes named LIVE and REPLAY. The app creates/updates "
-            "a Media Source named 'Aonang Replay' in REPLAY when you play a clip."
+            "OBS Studio 28+: enable Tools > WebSocket Server Settings (default port 4455). "
+            "Create scenes named LIVE and REPLAY. The application updates/creates the "
+            "Media Source 'Aonang Replay' in the REPLAY scene when a clip is played."
         )
         info.setWordWrap(True)
         info.setObjectName("info")
@@ -170,15 +166,15 @@ class ReplayWindow(QMainWindow):
             self.stop_camera()
             return
         idx = int(self.device.currentData())
-        # CAP_DSHOW is often the most reliable backend for USB capture devices on Windows.
         self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             self.cap.release()
             self.cap = cv2.VideoCapture(idx)
         if not self.cap.isOpened():
+            self.cap.release()
+            self.cap = None
             QMessageBox.warning(self, "Camera not found",
-                "Could not open this device. Check USB connection, close OBS or other apps using the card, "
-                "and try another device number.")
+                "Could not open this device. Check USB connection and close other applications using the capture card.")
             return
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -188,31 +184,31 @@ class ReplayWindow(QMainWindow):
         self.status.setText("CAMERA CONNECTED")
         self.capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
         self.capture_thread.start()
-        self.log.setText(f"Connected to camera device {idx}. Building a rolling {self.duration.value()} second buffer.")
+        self.log.setText(f"Connected to camera device {idx}. Rolling buffer: {self.duration.value()} seconds.")
 
     def stop_camera(self):
         self.running = False
         if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join(timeout=2)
+            self.capture_thread.join(timeout=3)
         if self.cap:
             self.cap.release()
             self.cap = None
         self.connect_btn.setText("CONNECT CAMERA")
         self.status.setText("CAMERA DISCONNECTED")
-        self.log.setText("Camera disconnected.")
 
     def capture_loop(self):
-        timestamps = deque()
-        while self.running and self.cap:
-            ok, frame = self.cap.read()
+        while self.running:
+            cap = self.cap
+            if cap is None:
+                break
+            ok, frame = cap.read()
             if not ok:
                 time.sleep(0.02)
                 continue
-            h, w = frame.shape[:2]
             now = time.time()
             with self.lock:
                 self.frames.append((now, frame.copy()))
-                cutoff = now - max(30, self.duration.value())
+                cutoff = now - self.duration.value()
                 while self.frames and self.frames[0][0] < cutoff:
                     self.frames.popleft()
             self.last_frame = frame
@@ -233,6 +229,22 @@ class ReplayWindow(QMainWindow):
         if self.last_frame is not None:
             self.update_preview(self.last_frame)
 
+    def _ffmpeg_path(self):
+        candidates = []
+        bundled = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        candidates.extend([bundled / "ffmpeg.exe", Path(sys.executable).parent / "ffmpeg.exe"])
+        from_path = shutil.which("ffmpeg")
+        if from_path:
+            candidates.append(Path(from_path))
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return None
+
     def save_replay(self):
         with self.lock:
             items = list(self.frames)
@@ -241,27 +253,59 @@ class ReplayWindow(QMainWindow):
             return
         seconds = self.duration.value()
         cutoff = time.time() - seconds
-        selected = [f for t, f in items if t >= cutoff]
+        selected = [(t, frame) for t, frame in items if t >= cutoff]
         if len(selected) < 2:
             QMessageBox.information(self, "Buffer filling", "The replay buffer is still filling. Wait a few seconds and try again.")
             return
         out_dir = Path.home() / "Videos" / "AonangReplays"
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / time.strftime("Replay_%Y%m%d_%H%M%S.mp4")
-        h, w = selected[0].shape[:2]
-        # Derive a stable playback FPS from actual frame count/time span.
-        span = max(1.0, items[-1][0] - max(cutoff, items[0][0]))
-        fps = max(10.0, min(60.0, len(selected) / span))
-        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-        if not writer.isOpened():
-            QMessageBox.critical(self, "Save failed", "Could not create MP4. Check disk space and OpenCV video codec support.")
+        span = max(0.1, selected[-1][0] - selected[0][0])
+        fps = max(10.0, min(60.0, (len(selected) - 1) / span))
+        ffmpeg = self._ffmpeg_path()
+        if ffmpeg:
+            height, width = selected[0][1].shape[:2]
+            command = [
+                ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo",
+                "-pix_fmt", "bgr24", "-video_size", f"{width}x{height}",
+                "-framerate", f"{fps:.3f}", "-i", "-", "-an",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                str(path)
+            ]
+            try:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.PIPE)
+                for _, frame in selected:
+                    process.stdin.write(frame.tobytes())
+                process.stdin.close()
+                stderr = process.stderr.read().decode("utf-8", errors="replace")
+                code = process.wait()
+                if code != 0:
+                    raise RuntimeError(stderr or f"FFmpeg exited with code {code}")
+            except Exception as exc:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                QMessageBox.critical(self, "Save failed", f"FFmpeg could not create MP4:\n{exc}")
+                return
+        else:
+            height, width = selected[0][1].shape[:2]
+            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+            if not writer.isOpened():
+                QMessageBox.critical(self, "Save failed", "FFmpeg and OpenCV MP4 encoders are unavailable.")
+                return
+            try:
+                for _, frame in selected:
+                    writer.write(frame)
+            finally:
+                writer.release()
+        if not path.is_file() or path.stat().st_size == 0:
+            QMessageBox.critical(self, "Save failed", "The output MP4 file is empty or was not created.")
             return
-        for frame in selected:
-            writer.write(frame)
-        writer.release()
         self.replay_path = str(path)
         self.play_file_in_preview(self.replay_path)
-        self.log.setText(f"Saved {len(selected)} frames to: {path}")
+        self.log.setText(f"Saved {len(selected)} frames ({seconds}s target) to: {path}")
 
     def play_file_in_preview(self, path):
         cap = cv2.VideoCapture(path)
@@ -279,7 +323,10 @@ class ReplayWindow(QMainWindow):
         self.replay_view.setToolTip(path)
 
     def open_replay(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Replay Video", str(Path.home() / "Videos"), "Video files (*.mp4 *.mov *.avi *.mkv)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Replay Video", str(Path.home() / "Videos"),
+            "Video files (*.mp4 *.mov *.avi *.mkv)"
+        )
         if path:
             self.replay_path = path
             self.play_file_in_preview(path)
@@ -297,7 +344,7 @@ class ReplayWindow(QMainWindow):
     def return_live(self):
         if self.last_frame is not None:
             self.update_preview(self.last_frame)
-        self.log.setText("Live preview selected. In OBS, switch back to your LIVE scene/source.")
+        self.log.setText("Live preview selected. Use BACK TO LIVE to switch the OBS program scene.")
 
     def connect_obs(self):
         host, ok = QInputDialog.getText(self, "Connect OBS", "OBS WebSocket host:", text=self.obs_host)
@@ -306,55 +353,56 @@ class ReplayWindow(QMainWindow):
         port, ok = QInputDialog.getInt(self, "Connect OBS", "WebSocket port:", self.obs_port, 1, 65535)
         if not ok:
             return
-        password, ok = QInputDialog.getText(self, "Connect OBS", "WebSocket password (leave blank if none):",
-                                            text=self.obs_password)
+        password, ok = QInputDialog.getText(
+            self, "Connect OBS", "WebSocket password (leave blank if none):", text=self.obs_password
+        )
         if not ok:
             return
         try:
             client = obsws.ReqClient(host=host.strip(), port=port, password=password, timeout=3)
-            client.get_version()  # verify the WebSocket connection and authentication
-            scenes_response = client.get_scene_list()
-            scene_names = [s.get("sceneName") for s in getattr(scenes_response, "scenes", [])]
+            client.get_version()
+            response = client.get_scene_list()
+            scene_names = [s.get("sceneName") for s in getattr(response, "scenes", [])]
             missing = [name for name in (self.obs_live_scene, self.obs_replay_scene) if name not in scene_names]
             if missing:
-                raise RuntimeError("ไม่พบฉาก OBS: " + ", ".join(missing) + " — กรุณาสร้างฉาก LIVE และ REPLAY ใน OBS ก่อน")
+                raise RuntimeError("OBS scenes not found: " + ", ".join(missing))
             self.obs_client = client
             self.obs_host, self.obs_port, self.obs_password = host.strip(), port, password
             self.obs_status.setText(f"Connection Status: CONNECTED ({self.obs_host}:{self.obs_port})")
             self.obs_connect_btn.setText("Reconnect OBS")
-            self.log.setText("เชื่อมต่อ OBS สำเร็จ พร้อมควบคุมฉาก LIVE/REPLAY")
+            self.log.setText("OBS connected. LIVE and REPLAY scenes are ready.")
         except Exception as exc:
             self.obs_client = None
             self.obs_status.setText("Connection Status: DISCONNECTED")
             QMessageBox.warning(self, "OBS connection failed",
-                                "เชื่อมต่อ OBS ไม่สำเร็จ\nตรวจสอบว่า OBS เปิดอยู่และเปิด WebSocket Server แล้ว\n\n" + str(exc))
+                "Could not connect to OBS. Check that OBS is open and its WebSocket server is enabled.\n\n" + str(exc))
 
     def _require_obs(self):
         if self.obs_client is None:
-            QMessageBox.information(self, "OBS not connected", "กด Connect OBS และเชื่อมต่อให้สำเร็จก่อน")
+            QMessageBox.information(self, "OBS not connected", "Press Connect OBS and complete the connection first.")
             return False
         return True
 
     def _ensure_replay_media_source(self):
-        response = self.obs_client.get_input_list()
-        names = [item.get("inputName") for item in getattr(response, "inputs", [])]
-        if self.obs_media_source not in names:
+        inputs = self.obs_client.get_input_list()
+        input_names = [item.get("inputName") for item in getattr(inputs, "inputs", [])]
+        settings = {"local_file": self.replay_path, "is_local_file": True, "looping": False}
+        if self.obs_media_source not in input_names:
             self.obs_client.create_input(
-                self.obs_replay_scene, self.obs_media_source, "ffmpeg_source",
-                {"local_file": self.replay_path, "is_local_file": True, "looping": False}, True
+                self.obs_replay_scene, self.obs_media_source, "ffmpeg_source", settings, True
             )
-        else:
-            self.obs_client.set_input_settings(
-                self.obs_media_source,
-                {"local_file": self.replay_path, "is_local_file": True, "looping": False},
-                overlay=True
-            )
+            return
+        self.obs_client.set_input_settings(self.obs_media_source, settings, overlay=True)
+        scene_items_response = self.obs_client.get_scene_item_list(self.obs_replay_scene)
+        scene_items = getattr(scene_items_response, "scene_items", [])
+        if not any(item.get("sourceName") == self.obs_media_source for item in scene_items):
+            self.obs_client.create_scene_item(self.obs_replay_scene, self.obs_media_source, True)
 
     def play_replay_obs(self):
         if not self._require_obs():
             return
         if not self.replay_path or not os.path.isfile(self.replay_path):
-            QMessageBox.information(self, "No replay selected", "กรุณากด SAVE REPLAY หรือ OPEN REPLAY FILE ก่อน")
+            QMessageBox.information(self, "No replay selected", "Save a replay or open a replay video file first.")
             return
         try:
             self._ensure_replay_media_source()
@@ -363,7 +411,7 @@ class ReplayWindow(QMainWindow):
                 self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
             )
             self.obs_status.setText("Connection Status: CONNECTED | REPLAY PLAYING")
-            self.log.setText(f"กำลังเล่นรีเพลย์บน OBS: {self.replay_path}")
+            self.log.setText(f"Playing replay in OBS: {self.replay_path}")
         except Exception as exc:
             QMessageBox.warning(self, "OBS replay failed", str(exc))
 
@@ -375,7 +423,7 @@ class ReplayWindow(QMainWindow):
                 self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"
             )
             self.obs_status.setText("Connection Status: CONNECTED | REPLAY STOPPED")
-            self.log.setText("หยุดเล่นรีเพลย์ใน OBS แล้ว")
+            self.log.setText("OBS replay stopped.")
         except Exception as exc:
             QMessageBox.warning(self, "OBS stop failed", str(exc))
 
@@ -385,21 +433,23 @@ class ReplayWindow(QMainWindow):
         try:
             self.obs_client.set_current_program_scene(self.obs_live_scene)
             self.obs_status.setText("Connection Status: CONNECTED | LIVE")
-            self.log.setText("เปลี่ยนกลับไปฉาก LIVE ใน OBS แล้ว")
+            self.log.setText("Switched OBS program scene to LIVE.")
         except Exception as exc:
             QMessageBox.warning(self, "OBS scene switch failed", str(exc))
 
     def refresh_status(self):
         if self.running:
             with self.lock:
-                n = len(self.frames)
-                span = self.frames[-1][0] - self.frames[0][0] if n > 1 else 0
-            self.status.setText(f"CAMERA CONNECTED  |  BUFFER {min(self.duration.value(), int(span))}/{self.duration.value()}s")
+                span = self.frames[-1][0] - self.frames[0][0] if len(self.frames) > 1 else 0
+            self.status.setText(
+                f"CAMERA CONNECTED | BUFFER {min(self.duration.value(), int(span))}/{self.duration.value()}s"
+            )
         else:
             self.status.setText("CAMERA DISCONNECTED")
 
     def closeEvent(self, event):
         self.stop_camera()
+        self.obs_client = None
         event.accept()
 
 def main():
