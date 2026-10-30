@@ -52,11 +52,13 @@ jobs:
           Write-Host "Installer script: $script"
           Write-Host "PyInstaller output: $distDir"
           Write-Host "Installer output: $outputDir"
+          Write-Host "Current directory before compile: $((Get-Location).Path)"
+          Write-Host "Output directory exists: $(Test-Path $outputDir)"
           Write-Host "Installer source files:"
           Get-ChildItem $distDir | Select-Object -First 10 Name
           Push-Location $project
           try {
-            & $compiler "/O$outputDir" $script
+            & $compiler $script
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
           } finally {
             Pop-Location
