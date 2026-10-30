@@ -12,28 +12,28 @@ if errorlevel 1 (
   exit /b 1
 )
 py -3.11 -m pip install --upgrade pip
+if errorlevel 1 goto :fail
 py -3.11 -m pip install -r requirements.txt
-py -3.11 -m PyInstaller --noconfirm --windowed --name AonangReplaySystem --collect-all PySide6 src\main.py
-if errorlevel 1 (
-  echo Build failed while creating the app EXE.
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail
+py -3.11 -m PyInstaller --noconfirm --clean --windowed --name AonangReplaySystem --collect-all PySide6 --collect-all cv2 --collect-all obsws_python src\main.py
+if errorlevel 1 goto :fail
 where ISCC.exe >nul 2>nul
 if errorlevel 1 (
-  echo.
   echo Inno Setup compiler ISCC.exe was not found.
-  echo Install Inno Setup 6, then run this file again.
-  echo The official download page is https://jrsoftware.org/isinfo.php
+  echo Install Inno Setup 6 from https://jrsoftware.org/isinfo.php
   pause
   exit /b 1
 )
 ISCC.exe AONANG_REPLAY_SETUP.iss
-if errorlevel 1 (
-  echo Setup build failed. Check the messages above.
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail
+if not exist "installer_output\Setup_AonangReplaySystem.exe" goto :fail
 echo.
-echo SUCCESS. Installer is in installer_output\Setup_AonangReplaySystem.exe
+echo SUCCESS: installer_output\Setup_AonangReplaySystem.exe
 pause
+exit /b 0
+
+:fail
+echo.
+echo BUILD FAILED. Review the error messages above.
+pause
+exit /b 1
