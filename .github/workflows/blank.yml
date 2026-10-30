@@ -26,16 +26,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
 
-      - name: Build application EXE
+      - name: Compile application
         working-directory: AonangReplaySystem_Setup_Builder/AonangReplaySystem
-        run: python -m PyInstaller --noconfirm --clean --windowed --name AonangReplaySystem src/main.py
+        run: python -m PyInstaller --noconfirm --clean --windowed --name AonangReplaySystem --collect-all PySide6 --collect-all cv2 --collect-all obsws_python src/main.py
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
 
-      - name: Build Setup.exe
+      - name: Build installer
         shell: pwsh
         run: |
           $project = Join-Path $env:GITHUB_WORKSPACE "AonangReplaySystem_Setup_Builder\AonangReplaySystem"
@@ -52,7 +51,7 @@ jobs:
           } finally {
             Pop-Location
           }
-          $setup = Join-Path $project "Setup_AonangReplaySystem.exe"
+          $setup = Join-Path $project "installer_output\Setup_AonangReplaySystem.exe"
           if (!(Test-Path $setup)) { throw "Setup.exe was not created: $setup" }
           Get-Item $setup | Select-Object FullName, Length
 
@@ -60,6 +59,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AonangReplaySystem-Setup-Windows
-          path: AonangReplaySystem_Setup_Builder/AonangReplaySystem/Setup_AonangReplaySystem.exe
+          path: AonangReplaySystem_Setup_Builder/AonangReplaySystem/installer_output/Setup_AonangReplaySystem.exe
           if-no-files-found: error
           retention-days: 14
