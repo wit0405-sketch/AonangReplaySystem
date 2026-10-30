@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: ["main"]
+    tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-installer:
@@ -68,11 +69,30 @@ jobs:
           $setup = Join-Path $outputDir "Setup_AonangReplaySystem.exe"
           if (!(Test-Path $setup)) { throw "Setup.exe was not created: $setup" }
           Get-Item $setup | Select-Object FullName, Length
+          $hashFile = Join-Path $outputDir "SHA256SUMS.txt"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  Setup_AonangReplaySystem.exe" | Set-Content -Path $hashFile -Encoding ascii
+          Write-Host "Installer SHA-256: $hash"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: AonangReplaySystem-Setup-Windows
-          path: ${{ runner.temp }}/AonangReplayInstaller/Setup_AonangReplaySystem.exe
+          path: |
+            ${{ runner.temp }}/AonangReplayInstaller/Setup_AonangReplaySystem.exe
+            ${{ runner.temp }}/AonangReplayInstaller/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $outputDir = Join-Path $env:RUNNER_TEMP "AonangReplayInstaller"
+          $setup = Join-Path $outputDir "Setup_AonangReplaySystem.exe"
+          $hashFile = Join-Path $outputDir "SHA256SUMS.txt"
+          if (!(Test-Path $setup)) { throw "Installer missing; release cancelled." }
+          if (!(Test-Path $hashFile)) { throw "SHA256 file missing; release cancelled." }
+          gh release create "$env:GITHUB_REF_NAME" $setup $hashFile --title "Aonang Replay System $env:GITHUB_REF_NAME" --generate-notes
