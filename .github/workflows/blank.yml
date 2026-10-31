@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Release version (e.g. v0.2.0); leave blank for build only"
-        required: false
+        description: "Release version to publish (do not enter the branch name)"
+        required: true
+        default: "v0.2.0"
         type: string
   push:
     branches: ["main"]
@@ -94,18 +95,23 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION_INPUT: ${{ inputs.release_version }}
+          RELEASE_VERSION_INPUT: ${{ github.event.inputs.release_version }}
         run: |
           $outputDir = Join-Path $env:RUNNER_TEMP "AonangReplayInstaller"
           $setup = Join-Path $outputDir "Setup_AonangReplaySystem.exe"
           $hashFile = Join-Path $outputDir "SHA256SUMS.txt"
           if (!(Test-Path $setup)) { throw "Installer missing; release cancelled." }
           if (!(Test-Path $hashFile)) { throw "SHA256 file missing; release cancelled." }
-          if ($env:GITHUB_REF.StartsWith("refs/tags/v")) {
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
             $version = $env:GITHUB_REF_NAME
-          } else {
+          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
             $version = $env:RELEASE_VERSION_INPUT.Trim()
+          } else {
+            throw "Release publishing is only allowed for a version tag or manual workflow dispatch."
           }
+          Write-Host "Event: $env:GITHUB_EVENT_NAME"
+          Write-Host "Ref: $env:GITHUB_REF"
+          Write-Host "Requested release version: $version"
           if ($version -notmatch "^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$") {
             throw "Invalid release version '$version'. Use a version like v0.2.0."
           }
