@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 import obsws_python as obsws
 
 APP_NAME = "AONANG LANDMARK REPLAY SYSTEM"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 
 class FrameBus(QObject):
     frame_ready = Signal(object)
@@ -137,6 +137,9 @@ class ReplayWindow(QMainWindow):
         self.playlist_list = QListWidget()
         self.playlist_list.setMinimumHeight(150)
         self.playlist_list.setSelectionMode(QListWidget.SingleSelection)
+        self.playlist_list.setAlternatingRowColors(True)
+        self.playlist_list.setToolTip("Use ADD VIDEOS to add clips. Double-click a clip to play it in OBS.")
+        self.playlist_list.itemDoubleClicked.connect(self.play_selected_playlist_item)
         playlist_layout.addWidget(self.playlist_list)
         playlist_buttons = QGridLayout()
         self.new_playlist_btn = QPushButton("NEW PLAYLIST")
@@ -169,7 +172,7 @@ class ReplayWindow(QMainWindow):
             playlist_buttons.addWidget(button, pos // 5, pos % 5)
         playlist_layout.addLayout(playlist_buttons)
         playlist_layout.addWidget(self.repeat_playlist_check)
-        self.playlist_status = QLabel("Playlist: 0 videos | Ready")
+        self.playlist_status = QLabel("Playlist: 0 videos | Click ADD VIDEOS to begin")
         self.playlist_status.setObjectName("obsStatus")
         playlist_layout.addWidget(self.playlist_status)
         main.addWidget(playlist_box)
@@ -200,10 +203,14 @@ class ReplayWindow(QMainWindow):
             QLabel#video { background: #05090e; border: 2px solid #32475c; color: #91a7bd; font-size: 16px; }
             QGroupBox { border: 1px solid #32475c; margin-top: 8px; padding-top: 8px; font-weight: bold; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #62b5ff; }
-            QPushButton { background: #25394d; border: 1px solid #42627f; padding: 12px; border-radius: 4px; font-weight: bold; }
+            QPushButton { color: #edf3fa; background: #25394d; border: 1px solid #42627f; padding: 12px; min-height: 22px; border-radius: 4px; font-weight: bold; }
             QPushButton:hover { background: #315575; }
             QPushButton#save { background: #a82929; border-color: #e34a4a; }
             QPushButton#save:hover { background: #c23838; }
+            QListWidget { background: #0b121a; color: #edf3fa; border: 1px solid #42627f; padding: 5px; font-size: 13px; }
+            QListWidget::item { padding: 7px; }
+            QListWidget::item:selected { background: #315575; color: #ffffff; }
+            QCheckBox { color: #edf3fa; spacing: 8px; padding: 5px; }
             QComboBox, QSpinBox { background: #182635; padding: 8px; border: 1px solid #42627f; }
             QLabel#info { background: #182635; padding: 10px; color: #b9d7f0; }
             QLabel#obsStatus { background: #182635; padding: 8px; color: #ffcc66; font-weight: bold; }
@@ -447,6 +454,8 @@ class ReplayWindow(QMainWindow):
             self.obs_client.create_scene_item(self.obs_replay_scene, self.obs_media_source, True)
 
     def play_replay_obs(self):
+        self.playlist_active = False
+        self._playlist_waiting_for_end = False
         if not self._require_obs():
             return
         if not self.replay_path or not os.path.isfile(self.replay_path):
@@ -478,10 +487,19 @@ class ReplayWindow(QMainWindow):
             QMessageBox.warning(self, "OBS stop failed", str(exc))
 
     def back_to_live_obs(self):
+        self.playlist_active = False
+        self._playlist_waiting_for_end = False
         if not self._require_obs():
             return
         try:
+            try:
+                self.obs_client.trigger_media_input_action(
+                    self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"
+                )
+            except Exception:
+                pass
             self.obs_client.set_current_program_scene(self.obs_live_scene)
+            self._update_playlist_status("Stopped | Back to LIVE")
             self.obs_status.setText("Connection Status: CONNECTED | LIVE")
             self.log.setText("Switched OBS program scene to LIVE.")
         except Exception as exc:
@@ -599,6 +617,16 @@ class ReplayWindow(QMainWindow):
             f"Playlist: {len(self.playlist_paths)} videos | {message}{current}"
         )
 
+    def play_selected_playlist_item(self, item):
+        row = self.playlist_list.row(item)
+        if row < 0 or row >= len(self.playlist_paths):
+            return
+        if not self._require_obs():
+            return
+        self.playlist_index = row
+        self.playlist_active = True
+        self._play_playlist_item()
+
     def play_playlist(self):
         if not self._require_obs():
             return
@@ -669,7 +697,9 @@ class ReplayWindow(QMainWindow):
             state = getattr(response, "media_state", None)
             if state is None:
                 state = getattr(response, "mediaState", None)
-            if state == "OBS_MEDIA_STATE_ENDED" and self._last_playlist_media_state != "OBS_MEDIA_STATE_ENDED":
+            state_text = str(state).upper() if state is not None else ""
+            previous_state_text = str(self._last_playlist_media_state).upper() if self._last_playlist_media_state is not None else ""
+            if state_text.endswith("ENDED") and not previous_state_text.endswith("ENDED"):
                 self._playlist_waiting_for_end = False
                 self.step_playlist(1)
             self._last_playlist_media_state = state
