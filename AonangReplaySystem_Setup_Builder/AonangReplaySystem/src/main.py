@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 import obsws_python as obsws
 
 APP_NAME = "AONANG LANDMARK REPLAY SYSTEM"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 class FrameBus(QObject):
     frame_ready = Signal(object)
