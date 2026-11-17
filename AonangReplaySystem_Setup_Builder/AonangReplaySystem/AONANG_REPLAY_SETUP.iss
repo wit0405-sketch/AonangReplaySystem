@@ -1,6 +1,6 @@
 ; Inno Setup script for AONANG LANDMARK REPLAY SYSTEM
 #define MyAppName "AONANG LANDMARK REPLAY SYSTEM"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.3.1"
 #define MyAppPublisher "Aonang Landmark Boxing Stadium"
 #define MyAppExeName "AonangReplaySystem.exe"
 
