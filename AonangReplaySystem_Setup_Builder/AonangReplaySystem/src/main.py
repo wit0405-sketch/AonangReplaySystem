@@ -1,4 +1,4 @@
-import sys, os, time, threading, subprocess, shutil
+import sys, os, time, threading, subprocess, shutil, json
 from collections import deque
 from pathlib import Path
 
@@ -8,7 +8,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QMessageBox,
-    QFileDialog, QSpinBox, QInputDialog
+    QFileDialog, QSpinBox, QInputDialog, QListWidget, QListWidgetItem, QCheckBox
 )
 import obsws_python as obsws
 
@@ -38,6 +38,12 @@ class ReplayWindow(QMainWindow):
         self.obs_live_scene = "LIVE"
         self.obs_replay_scene = "REPLAY"
         self.obs_media_source = "Aonang Replay"
+        self.playlist_paths = []
+        self.playlist_index = -1
+        self.playlist_active = False
+        self.playlist_repeat = False
+        self._playlist_waiting_for_end = False
+        self._last_playlist_media_state = None
         self.bus = FrameBus()
         self.bus.frame_ready.connect(self.update_preview)
         self._build_ui()
@@ -125,6 +131,48 @@ class ReplayWindow(QMainWindow):
         self.obs_status.setObjectName("obsStatus")
         obs_layout.addWidget(self.obs_status)
         main.addWidget(obs_box)
+
+        playlist_box = QGroupBox("PLAYLIST MANAGER")
+        playlist_layout = QVBoxLayout(playlist_box)
+        self.playlist_list = QListWidget()
+        self.playlist_list.setMinimumHeight(150)
+        self.playlist_list.setSelectionMode(QListWidget.SingleSelection)
+        playlist_layout.addWidget(self.playlist_list)
+        playlist_buttons = QGridLayout()
+        self.new_playlist_btn = QPushButton("NEW PLAYLIST")
+        self.new_playlist_btn.clicked.connect(self.new_playlist)
+        self.add_playlist_btn = QPushButton("ADD VIDEOS")
+        self.add_playlist_btn.clicked.connect(self.add_playlist_videos)
+        self.remove_playlist_btn = QPushButton("REMOVE")
+        self.remove_playlist_btn.clicked.connect(self.remove_playlist_video)
+        self.up_playlist_btn = QPushButton("MOVE UP")
+        self.up_playlist_btn.clicked.connect(lambda: self.move_playlist_video(-1))
+        self.down_playlist_btn = QPushButton("MOVE DOWN")
+        self.down_playlist_btn.clicked.connect(lambda: self.move_playlist_video(1))
+        self.save_playlist_btn = QPushButton("SAVE PLAYLIST")
+        self.save_playlist_btn.clicked.connect(self.save_playlist)
+        self.load_playlist_btn = QPushButton("LOAD PLAYLIST")
+        self.load_playlist_btn.clicked.connect(self.load_playlist)
+        self.play_all_btn = QPushButton("PLAY ALL")
+        self.play_all_btn.setObjectName("save")
+        self.play_all_btn.clicked.connect(self.play_playlist)
+        self.previous_video_btn = QPushButton("PREVIOUS")
+        self.previous_video_btn.clicked.connect(lambda: self.step_playlist(-1))
+        self.next_video_btn = QPushButton("NEXT VIDEO")
+        self.next_video_btn.clicked.connect(lambda: self.step_playlist(1))
+        self.repeat_playlist_check = QCheckBox("Repeat playlist")
+        self.repeat_playlist_check.toggled.connect(self.set_playlist_repeat)
+        for pos, button in enumerate((self.new_playlist_btn, self.add_playlist_btn,
+                self.remove_playlist_btn, self.up_playlist_btn, self.down_playlist_btn,
+                self.save_playlist_btn, self.load_playlist_btn, self.play_all_btn,
+                self.previous_video_btn, self.next_video_btn)):
+            playlist_buttons.addWidget(button, pos // 5, pos % 5)
+        playlist_layout.addLayout(playlist_buttons)
+        playlist_layout.addWidget(self.repeat_playlist_check)
+        self.playlist_status = QLabel("Playlist: 0 videos | Ready")
+        self.playlist_status.setObjectName("obsStatus")
+        playlist_layout.addWidget(self.playlist_status)
+        main.addWidget(playlist_box)
 
         info = QLabel(
             "OBS Studio 28+: enable Tools > WebSocket Server Settings (default port 4455). "
@@ -419,6 +467,8 @@ class ReplayWindow(QMainWindow):
         if not self._require_obs():
             return
         try:
+            self.playlist_active = False
+            self._playlist_waiting_for_end = False
             self.obs_client.trigger_media_input_action(
                 self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"
             )
@@ -437,7 +487,198 @@ class ReplayWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "OBS scene switch failed", str(exc))
 
+    def new_playlist(self):
+        self.playlist_paths.clear()
+        self.playlist_index = -1
+        self.playlist_active = False
+        self._playlist_waiting_for_end = False
+        self.playlist_list.clear()
+        self._update_playlist_status("New playlist")
+
+    def add_playlist_videos(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Add videos to playlist", str(Path.home() / "Videos"),
+            "Video files (*.mp4 *.mov *.avi *.mkv *.wmv *.flv *.webm)"
+        )
+        for path in paths:
+            if path not in self.playlist_paths:
+                self.playlist_paths.append(path)
+                item = QListWidgetItem(Path(path).name)
+                item.setToolTip(path)
+                item.setData(Qt.UserRole, path)
+                self.playlist_list.addItem(item)
+        self._update_playlist_status("Videos added")
+
+    def remove_playlist_video(self):
+        row = self.playlist_list.currentRow()
+        if row < 0:
+            return
+        self.playlist_list.takeItem(row)
+        self.playlist_paths.pop(row)
+        if self.playlist_index == row:
+            self.playlist_index = -1
+            self.playlist_active = False
+        elif self.playlist_index > row:
+            self.playlist_index -= 1
+        self._update_playlist_status("Video removed")
+
+    def move_playlist_video(self, offset):
+        row = self.playlist_list.currentRow()
+        target = row + offset
+        if row < 0 or target < 0 or target >= len(self.playlist_paths):
+            return
+        self.playlist_paths[row], self.playlist_paths[target] = self.playlist_paths[target], self.playlist_paths[row]
+        item = self.playlist_list.takeItem(row)
+        self.playlist_list.insertItem(target, item)
+        self.playlist_list.setCurrentRow(target)
+        if self.playlist_index == row:
+            self.playlist_index = target
+        elif self.playlist_index == target:
+            self.playlist_index = row
+        self._update_playlist_status("Order updated")
+
+    def save_playlist(self):
+        if not self.playlist_paths:
+            QMessageBox.information(self, "Empty playlist", "Add at least one video before saving.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save playlist", str(Path.home() / "Videos" / "AonangPlaylist.json"),
+            "Aonang Playlist (*.json)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        try:
+            payload = {"name": Path(path).stem, "videos": self.playlist_paths,
+                       "repeat": self.repeat_playlist_check.isChecked()}
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._update_playlist_status(f"Saved: {Path(path).name}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Save playlist failed", str(exc))
+
+    def load_playlist(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load playlist", str(Path.home() / "Videos"),
+            "Aonang Playlist (*.json)"
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            videos = payload.get("videos", [])
+            if not isinstance(videos, list):
+                raise ValueError("Playlist file has an invalid videos list.")
+            self.new_playlist()
+            for video in videos:
+                if isinstance(video, str) and os.path.isfile(video):
+                    self.playlist_paths.append(video)
+                    item = QListWidgetItem(Path(video).name)
+                    item.setToolTip(video)
+                    item.setData(Qt.UserRole, video)
+                    self.playlist_list.addItem(item)
+            repeat = bool(payload.get("repeat", False))
+            self.repeat_playlist_check.setChecked(repeat)
+            self._update_playlist_status(f"Loaded: {Path(path).name}")
+            missing = len(videos) - len(self.playlist_paths)
+            if missing:
+                QMessageBox.information(self, "Missing video files",
+                    f"{missing} video file(s) could not be found and were skipped.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Load playlist failed", str(exc))
+
+    def set_playlist_repeat(self, enabled):
+        self.playlist_repeat = bool(enabled)
+
+    def _update_playlist_status(self, message="Ready"):
+        current = ""
+        if 0 <= self.playlist_index < len(self.playlist_paths):
+            current = f" | Current: {Path(self.playlist_paths[self.playlist_index]).name}"
+        self.playlist_status.setText(
+            f"Playlist: {len(self.playlist_paths)} videos | {message}{current}"
+        )
+
+    def play_playlist(self):
+        if not self._require_obs():
+            return
+        if not self.playlist_paths:
+            QMessageBox.information(self, "Empty playlist", "Use ADD VIDEOS to create a playlist first.")
+            return
+        self.playlist_active = True
+        self.playlist_index = 0
+        self._play_playlist_item()
+
+    def _play_playlist_item(self):
+        if not (0 <= self.playlist_index < len(self.playlist_paths)):
+            self.playlist_active = False
+            self._playlist_waiting_for_end = False
+            self._update_playlist_status("Playlist finished")
+            return
+        path = self.playlist_paths[self.playlist_index]
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, "Video not found", f"Cannot find video file:\\n{path}")
+            self.step_playlist(1)
+            return
+        self.replay_path = path
+        self.play_file_in_preview(path)
+        try:
+            self._ensure_replay_media_source()
+            self.obs_client.set_current_program_scene(self.obs_replay_scene)
+            self.obs_client.trigger_media_input_action(
+                self.obs_media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
+            )
+            self._playlist_waiting_for_end = True
+            self._last_playlist_media_state = None
+            self.playlist_list.setCurrentRow(self.playlist_index)
+            self._update_playlist_status("PLAYING")
+            self.log.setText(f"Playlist {self.playlist_index + 1}/{len(self.playlist_paths)}: {path}")
+        except Exception as exc:
+            self.playlist_active = False
+            self._playlist_waiting_for_end = False
+            QMessageBox.warning(self, "Playlist playback failed", str(exc))
+
+    def step_playlist(self, offset):
+        if not self.playlist_paths:
+            return
+        if self.playlist_index < 0:
+            self.playlist_index = 0 if offset >= 0 else len(self.playlist_paths) - 1
+        else:
+            self.playlist_index += offset
+        if self.playlist_index >= len(self.playlist_paths):
+            if self.playlist_repeat:
+                self.playlist_index = 0
+            else:
+                self.playlist_active = False
+                self._playlist_waiting_for_end = False
+                self._update_playlist_status("Playlist finished")
+                return
+        elif self.playlist_index < 0:
+            if self.playlist_repeat:
+                self.playlist_index = len(self.playlist_paths) - 1
+            else:
+                self.playlist_index = 0
+        self.playlist_active = True
+        self._play_playlist_item()
+
+    def _poll_playlist_end(self):
+        if not self.playlist_active or not self._playlist_waiting_for_end or self.obs_client is None:
+            return
+        try:
+            response = self.obs_client.get_media_input_status(self.obs_media_source)
+            state = getattr(response, "media_state", None)
+            if state is None:
+                state = getattr(response, "mediaState", None)
+            if state == "OBS_MEDIA_STATE_ENDED" and self._last_playlist_media_state != "OBS_MEDIA_STATE_ENDED":
+                self._playlist_waiting_for_end = False
+                self.step_playlist(1)
+            self._last_playlist_media_state = state
+        except Exception:
+            # Keep playback controls usable if OBS does not expose media status.
+            pass
+
     def refresh_status(self):
+        self._poll_playlist_end()
         if self.running:
             with self.lock:
                 span = self.frames[-1][0] - self.frames[0][0] if len(self.frames) > 1 else 0
