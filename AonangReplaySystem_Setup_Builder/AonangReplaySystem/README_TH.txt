@@ -16,6 +16,11 @@ AONANG LANDMARK REPLAY SYSTEM v0.2.0 — Windows 10/11
 - STOP REPLAY: หยุด Media Source
 - BACK TO LIVE: สลับ Program Scene กลับไป LIVE
 - แสดงสถานะการเชื่อมต่อ OBS
+- Playlist Manager: สร้างรายการเล่นใหม่ เพิ่ม/ลบวิดีโอ และจัดลำดับด้วย MOVE UP / MOVE DOWN
+- PLAY ALL: เล่นวิดีโอใน Playlist ผ่าน OBS Media Source ตามลำดับ และเลื่อนไปไฟล์ถัดไปเมื่อคลิปจบ
+- NEXT VIDEO / PREVIOUS: ข้ามหรือย้อนคลิปใน Playlist
+- Repeat playlist: เล่นวนซ้ำทั้งรายการ
+- SAVE PLAYLIST / LOAD PLAYLIST: บันทึกและเปิดรายการเล่นเป็นไฟล์ JSON
 
 การตั้งค่า OBS
 1. เปิด OBS Studio 28 หรือใหม่กว่า
@@ -49,3 +54,12 @@ Build ผ่าน GitHub Actions
 - ต้องทดสอบกับ Windows จริง, capture card จริง และ OBS ที่ตั้งค่า WebSocket แล้ว
 - การ build สำเร็จไม่ได้ยืนยันว่ากล้องทุกอุปกรณ์หรือ OBS ทุก configuration จะทำงานเหมือนกัน
 - โปรแกรมนี้ยังไม่ใช่ระบบ replay แบบหลายกล้อง/instant replay hardware broadcast
+
+การใช้งาน Playlist
+1. เชื่อมต่อ OBS ด้วย Connect OBS และเตรียมฉาก LIVE / REPLAY
+2. กด ADD VIDEOS เพื่อเลือกไฟล์วิดีโอหลายไฟล์
+3. จัดลำดับด้วย MOVE UP / MOVE DOWN และลบรายการด้วย REMOVE
+4. กด SAVE PLAYLIST เพื่อบันทึกเป็นไฟล์ JSON หรือ LOAD PLAYLIST เพื่อเปิดรายการเดิม
+5. กด PLAY ALL เพื่อเล่นต่อเนื่องใน OBS; ใช้ NEXT VIDEO / PREVIOUS เพื่อควบคุมรายการ
+6. เลือก Repeat playlist หากต้องการให้วนกลับไปเล่นคลิปแรกเมื่อจบรายการ
+หมายเหตุ: การเล่นอัตโนมัติอาศัยสถานะ Media Source จาก OBS WebSocket และไฟล์วิดีโอต้องยังอยู่ในตำแหน่งเดิม
